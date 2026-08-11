@@ -12,8 +12,8 @@ Funciones principales:
 - Resultado, explicaciones y PDF descargable.
 
 Para generar preguntas nuevas sobre cualquier tema se requiere OPENAI_API_KEY
-configurada en Streamlit Secrets. Si no está configurada, se usa el banco local
-de demostración y se informa al usuario.
+configurada en Streamlit Secrets. Si la conexión no está configurada, la aplicación
+muestra un aviso y no presenta preguntas de demostración.
 """
 
 from __future__ import annotations
@@ -284,11 +284,11 @@ if OPENAI_API_KEY and OpenAI is not None:
 
 
 # -----------------------------------------------------------------------------
-# BANCO LOCAL DE RESPALDO
+# BANCO LOCAL HISTÓRICO (NO SE USA COMO FALLBACK)
 # -----------------------------------------------------------------------------
-# Se conserva un banco local para que la aplicación pueda mostrar ejemplos aun
-# cuando todavía no se hayan configurado los Secrets de OpenAI. Para 80/100
-# preguntas nuevas y para cualquier tema se debe configurar OPENAI_API_KEY.
+# Se conserva como referencia del banco original, pero el simulador profesional
+# solo muestra preguntas cuando la conexión con OpenAI está activa. Así no se
+# presentan cuatro reactivos como si fueran un simulacro completo.
 BANCO_LOCAL = [
     {
         "modo": "Comprensión lectora",
@@ -506,14 +506,19 @@ def generar_bloque(config: dict[str, Any], cantidad: int) -> list[dict[str, Any]
 
 
 def generar_preguntas(config: dict[str, Any], cantidad: int) -> tuple[list[dict], bool]:
-    """Genera en lotes y devuelve preguntas junto con si se usó IA."""
+    """Genera preguntas nuevas en lotes; no usa preguntas repetidas de respaldo."""
+    if not OPENAI_API_KEY:
+        raise RuntimeError(
+            "OPENAI_API_KEY no está configurada en los Secrets de esta aplicación."
+        )
+    if OpenAI is None:
+        raise RuntimeError(
+            "La dependencia openai no está instalada. Revisa requirements.txt."
+        )
     if CLIENTE_OPENAI is None:
-        local = []
-        for item in BANCO_LOCAL:
-            copia = dict(item)
-            copia["opciones"] = dict(item["opciones"])
-            local.append(copia)
-        return local[:cantidad], False
+        raise RuntimeError(
+            "No se pudo iniciar la conexión con OpenAI. Revisa la clave y reinicia la aplicación."
+        )
 
     preguntas: list[dict] = []
     huellas: set[str] = set()
@@ -703,6 +708,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+if CLIENTE_OPENAI is not None:
+    st.success("✅ Generador de preguntas con IA conectado y listo.")
+else:
+    st.warning(
+        "⚠️ Generador de IA no conectado. Configura OPENAI_API_KEY en Secrets; "
+        "la aplicación no usará preguntas de demostración."
+    )
+
 
 # -----------------------------------------------------------------------------
 # CONFIGURACIÓN DEL SIMULACRO
@@ -764,11 +777,6 @@ with st.container(border=True):
 if iniciar:
     if not eje.strip() and not texto_base.strip():
         st.warning("Escribe un eje temático o pega un texto base para generar el simulacro.")
-    elif cantidad >= 50 and CLIENTE_OPENAI is None:
-        st.error(
-            "Para generar 50, 80 o 100 preguntas nuevas necesitas configurar "
-            "OPENAI_API_KEY en Streamlit Secrets."
-        )
     else:
         config = {
             "modo": modo,
@@ -780,13 +788,15 @@ if iniciar:
             "opciones_extension": opciones_extension,
             "texto_base": texto_base.strip(),
         }
+        error_generacion = ""
         with st.spinner(f"Construyendo {cantidad} preguntas en bloques de {BLOQUE_GENERACION}..."):
             try:
                 preguntas, uso_ia = generar_preguntas(config, cantidad)
-            except RuntimeError:
+            except RuntimeError as error:
                 preguntas, uso_ia = [], False
+                error_generacion = str(error)
 
-        if len(preguntas) < cantidad:
+        if len(preguntas) < cantidad and preguntas:
             st.warning(
                 f"Se generaron {len(preguntas)} preguntas válidas de {cantidad}. "
                 "Puedes volver a intentarlo para completar el simulacro."
@@ -799,7 +809,10 @@ if iniciar:
             st.session_state["respuestas"] = {}
             st.rerun()
         else:
-            st.error("No se pudo construir el simulacro. Revisa la configuración e inténtalo de nuevo.")
+            st.error(
+                error_generacion
+                or "No se pudo construir el simulacro. Revisa la configuración e inténtalo de nuevo."
+            )
 
 
 # -----------------------------------------------------------------------------
@@ -932,4 +945,3 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
