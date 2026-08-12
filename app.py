@@ -273,7 +273,8 @@ ENLACE_SIMO = "https://simo.cnsc.gov.co"
 ENLACE_JITSI = "https://meet.jit.si/SiAlMeritoSesionGarantizada2026Oficial"
 
 CANTIDADES = [1, 5, 10, 20, 30, 50, 80, 100]
-BLOQUE_GENERACION = 10
+# Bloques pequeños: mejor calidad y menos espera para 5, 10 y 20 preguntas.
+BLOQUE_GENERACION = 5
 NIVELES_COMPLEJIDAD = [
     "Mixta (progresiva)",
     "Básica",
@@ -348,11 +349,12 @@ def leer_secret(nombre: str, defecto: str = "") -> str:
 
 
 OPENAI_API_KEY = leer_secret("OPENAI_API_KEY")
-OPENAI_MODEL = leer_secret("OPENAI_MODEL", "gpt-4o")
+# Modelo rápido por defecto; si existe OPENAI_MODEL en Secrets se respeta esa elección.
+OPENAI_MODEL = leer_secret("OPENAI_MODEL", "gpt-4o-mini")
 CLIENTE_OPENAI = None
 if OPENAI_API_KEY and OpenAI is not None:
     try:
-        CLIENTE_OPENAI = OpenAI(api_key=OPENAI_API_KEY, timeout=60.0, max_retries=2)
+        CLIENTE_OPENAI = OpenAI(api_key=OPENAI_API_KEY, timeout=45.0, max_retries=0)
     except Exception:
         CLIENTE_OPENAI = None
 
@@ -606,8 +608,8 @@ def generar_bloque(config: dict[str, Any], cantidad: int) -> list[dict[str, Any]
             {"role": "user", "content": instrucciones_generacion(config, cantidad)},
         ],
         response_format={"type": "json_object"},
-        temperature=0.35,
-        max_tokens=min(12000, max(2500, cantidad * 900)),
+        temperature=0.25,
+        max_tokens=min(9000, max(3500, cantidad * 750)),
     )
     contenido = respuesta.choices[0].message.content or ""
     datos = json.loads(limpiar_json(contenido))
@@ -633,9 +635,10 @@ def generar_preguntas(config: dict[str, Any], cantidad: int) -> tuple[list[dict]
     preguntas: list[dict] = []
     huellas: set[str] = set()
     intentos = 0
+    max_intentos = max(3, (cantidad + BLOQUE_GENERACION - 1) // BLOQUE_GENERACION + 2)
 
-    # Se permiten varios intentos, pero nunca se presenta un simulacro incompleto como terminado.
-    while len(preguntas) < cantidad and intentos < 6:
+    # Se permiten reintentos proporcionales, pero nunca se presenta un simulacro incompleto.
+    while len(preguntas) < cantidad and intentos < max_intentos:
         faltan = cantidad - len(preguntas)
         lote = min(BLOQUE_GENERACION, faltan)
         intentos += 1
