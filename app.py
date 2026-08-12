@@ -372,6 +372,63 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Refuerzo de contraste para todos los controles del formulario y respuestas.
+st.markdown(
+    """
+    <style>
+    [data-testid="stTextInput"], [data-testid="stTextArea"],
+    [data-testid="stSelectbox"], [data-testid="stFileUploader"],
+    [data-testid="stRadio"] {
+        background: #87ceeb !important;
+        border: 2px solid #38bdf8 !important;
+        border-radius: 12px !important;
+        padding: .55rem .75rem !important;
+        color: #0b0f14 !important;
+    }
+    [data-testid="stTextInput"] *, [data-testid="stTextArea"] *,
+    [data-testid="stSelectbox"] *, [data-testid="stFileUploader"] *,
+    [data-testid="stRadio"] * {
+        color: #0b0f14 !important;
+        -webkit-text-fill-color: #0b0f14 !important;
+    }
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stSelectbox"] input {
+        background: #87ceeb !important;
+        color: #0b0f14 !important;
+        -webkit-text-fill-color: #0b0f14 !important;
+        font-size: 1.2rem !important;
+        font-weight: 600 !important;
+        line-height: 1.65 !important;
+    }
+    [data-testid="stTextInput"] label,
+    [data-testid="stTextArea"] label,
+    [data-testid="stSelectbox"] label,
+    [data-testid="stFileUploader"] label,
+    [data-testid="stRadio"] label,
+    [data-testid="stWidgetLabel"] p {
+        color: #0b0f14 !important;
+        font-size: 1.14rem !important;
+        font-weight: 800 !important;
+        line-height: 1.5 !important;
+    }
+    [data-testid="stFileUploader"] section {
+        background: #87ceeb !important;
+        border: 2px dashed #0284c7 !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stRadio"] label {
+        background: #bae6fd !important;
+        border: 1px solid #38bdf8 !important;
+        border-radius: 8px !important;
+        padding: .45rem .65rem !important;
+        margin: .25rem 0 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # -----------------------------------------------------------------------------
 # CONSTANTES Y SECRETOS
