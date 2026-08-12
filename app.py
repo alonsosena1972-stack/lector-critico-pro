@@ -290,25 +290,49 @@ st.markdown(
         box-shadow: 0 8px 24px rgba(0,0,0,.25) !important;
     }
     .question-title, .reading-label { color: #79c0ff !important; }
+    /* Campos celeste de alto contraste para lectura cómoda */
     div[data-baseweb="input"], div[data-baseweb="textarea"],
     div[data-baseweb="select"] > div {
-        background: #161b22 !important;
-        border-color: #30363d !important;
-        color: #e6edf3 !important;
+        background: #87ceeb !important;
+        border: 2px solid #38bdf8 !important;
+        color: #0b0f14 !important;
+        border-radius: 10px !important;
     }
     div[data-baseweb="input"] input,
     div[data-baseweb="textarea"] textarea,
-    div[data-baseweb="select"] input {
-        color: #e6edf3 !important;
-        -webkit-text-fill-color: #e6edf3 !important;
+    div[data-baseweb="select"] input,
+    div[data-baseweb="select"] span {
+        color: #0b0f14 !important;
+        -webkit-text-fill-color: #0b0f14 !important;
+        font-size: 1.18rem !important;
+        font-weight: 600 !important;
+        line-height: 1.6 !important;
+    }
+    div[data-baseweb="input"] input::placeholder,
+    div[data-baseweb="textarea"] textarea::placeholder {
+        color: #1e293b !important;
+        opacity: .9 !important;
     }
     div[data-baseweb="popover"], div[data-baseweb="menu"],
     div[data-baseweb="menu"] li {
-        background: #161b22 !important;
-        color: #e6edf3 !important;
+        background: #bae6fd !important;
+        color: #0b0f14 !important;
+        font-size: 1.12rem !important;
     }
     [data-testid="stRadio"] label, [data-testid="stCheckbox"] label {
         color: #e6edf3 !important;
+        font-size: 1.12rem !important;
+        line-height: 1.6 !important;
+    }
+    [data-testid="stRadio"] p, [data-testid="stCheckbox"] p {
+        font-size: 1.12rem !important;
+    }
+    .reading-card {
+        background: #87ceeb !important;
+        color: #0b0f14 !important;
+        border-left-color: #0284c7 !important;
+        font-size: 1.2rem !important;
+        line-height: 1.75 !important;
     }
     [data-testid="stAlert"] {
         background: #161b22 !important;
@@ -328,6 +352,15 @@ st.markdown(
     }
     [data-testid="stMetricLabel"], [data-testid="stMetricValue"] {
         color: #e6edf3 !important;
+    }
+    [data-testid="stCaptionContainer"] {
+        color: #c9d1d9 !important;
+        font-size: 1.05rem !important;
+        line-height: 1.55 !important;
+    }
+    .stButton > button, .stDownloadButton > button {
+        font-size: 1.16rem !important;
+        min-height: 3.4rem !important;
     }
     .footer-box {
         background: #161b22 !important;
