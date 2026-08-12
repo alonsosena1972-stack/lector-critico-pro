@@ -1,6 +1,6 @@
 """
-Lector Crítico Pro — SÍ AL MÉRITO
-Versión profesional y accesible.
+Lector Crítico CNSC — SÍ AL MÉRITO
+Motor de comprensión lectora, lectura crítica y juicio situacional para concursos.
 
 Funciones principales:
 - Comprensión lectora o lectura crítica.
@@ -24,14 +24,27 @@ import os
 import re
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
+
+from core import PUNTAJE_MINIMO, calcular_puntaje, valor_por_pregunta
 
 try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    from docx import Document
+except ImportError:
+    Document = None
 
 try:
     from reportlab.lib import colors
@@ -54,7 +67,7 @@ except ImportError:
 # CONFIGURACIÓN DE PÁGINA Y ESTILOS ACCESIBLES
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Lector Crítico Pro | SÍ AL MÉRITO",
+    page_title="Lector Crítico CNSC | SÍ AL MÉRITO",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -259,8 +272,69 @@ ENLACE_CNSC = "https://www.cnsc.gov.co"
 ENLACE_SIMO = "https://simo.cnsc.gov.co"
 ENLACE_JITSI = "https://meet.jit.si/SiAlMeritoSesionGarantizada2026Oficial"
 
-CANTIDADES = [1, 5, 10, 15, 20, 30, 40, 50, 80, 100]
+CANTIDADES = [1, 5, 10, 20, 30, 50, 80, 100]
 BLOQUE_GENERACION = 10
+NIVELES_COMPLEJIDAD = [
+    "Mixta (progresiva)",
+    "Básica",
+    "Intermedia",
+    "Avanzada",
+    "Experta",
+]
+NIVELES_BLOOM = [
+    "Comprender",
+    "Aplicar",
+    "Analizar",
+    "Evaluar",
+    "Inferir",
+]
+EJES_CARRERA_ADMINISTRATIVA = [
+    "Todos los ejes / tema libre",
+    "Constitución y derechos fundamentales",
+    "Organización del Estado y función pública",
+    "Administración y gestión pública",
+    "Planeación y gestión institucional",
+    "Servicio al ciudadano y derecho de petición",
+    "Transparencia, participación y control social",
+    "Ética, integridad y lucha contra la corrupción",
+    "Régimen disciplinario y responsabilidad del servidor público",
+    "Contratación estatal",
+    "Presupuesto y finanzas públicas",
+    "Control interno y gestión del riesgo",
+    "Talento humano y competencias comportamentales",
+    "Gestión documental y archivo",
+    "Gobierno digital y seguridad de la información",
+    "Enfoque diferencial, inclusión y derechos humanos",
+    "Gestión ambiental y desarrollo sostenible",
+    "Juicio situacional aplicado al servicio público",
+]
+
+# La prueba siempre se califica sobre 100 puntos.
+
+
+def extraer_texto_archivo(archivo: Any) -> tuple[str, str]:
+    """Extrae texto de PDF, DOCX o TXT y devuelve texto + nombre de fuente."""
+    if archivo is None:
+        return "", ""
+    nombre = str(getattr(archivo, "name", "material_subido"))
+    extension = Path(nombre).suffix.lower()
+    try:
+        contenido = archivo.getvalue()
+        if extension == ".pdf":
+            if PdfReader is None:
+                raise RuntimeError("Falta instalar pypdf para leer PDF.")
+            lector = PdfReader(BytesIO(contenido))
+            texto = "\n".join((pagina.extract_text() or "") for pagina in lector.pages)
+        elif extension == ".docx":
+            if Document is None:
+                raise RuntimeError("Falta instalar python-docx para leer Word.")
+            documento = Document(BytesIO(contenido))
+            texto = "\n".join(parrafo.text for parrafo in documento.paragraphs)
+        else:
+            texto = contenido.decode("utf-8", errors="replace")
+        return texto.strip(), nombre
+    except Exception as error:
+        raise RuntimeError(f"No fue posible leer {nombre}.") from error
 
 
 def leer_secret(nombre: str, defecto: str = "") -> str:
@@ -403,14 +477,24 @@ def limpiar_json(texto: str) -> str:
 
 
 def normalizar_pregunta(item: dict[str, Any], numero: int) -> dict[str, Any] | None:
+    """Valida estructura, dificultad, extensión y soporte de cada reactivo."""
     if not isinstance(item, dict):
         return None
     contexto = str(item.get("contexto", "")).strip()
     enunciado = str(item.get("enunciado", "")).strip()
     explicacion = str(item.get("explicacion", "")).strip()
     habilidad = str(item.get("habilidad", "")).strip() or "Análisis de lectura"
+    complejidad = str(item.get("complejidad", "Intermedia")).strip()
+    bloom = str(item.get("bloom", "Analizar")).strip()
+    tipo_ejercicio = str(item.get("tipo_ejercicio", "Lectura crítica")).strip()
     opciones = item.get("opciones", {})
     respuesta = str(item.get("respuesta", "")).strip().upper()
+    soporte = item.get("soporte", {})
+    if not isinstance(soporte, dict):
+        soporte = {}
+    fuente = str(soporte.get("fuente", "")).strip()
+    referencia = str(soporte.get("referencia", "")).strip()
+    enlace = str(soporte.get("enlace", "")).strip()
 
     if not isinstance(opciones, dict):
         return None
@@ -418,10 +502,18 @@ def normalizar_pregunta(item: dict[str, Any], numero: int) -> dict[str, Any] | N
         letra: str(opciones.get(letra, "")).strip()
         for letra in ("A", "B", "C", "D")
     }
+    palabras_contexto = len(contexto.split())
+    palabras_opciones = [len(opciones_limpias[x].split()) for x in opciones_limpias]
     if (
-        min(len(contexto), len(enunciado), len(explicacion)) < 20
-        or any(len(opciones_limpias[x]) < 5 for x in opciones_limpias)
+        palabras_contexto < 75
+        or len(enunciado) < 20
+        or len(explicacion) < 35
+        or any(palabras < 22 for palabras in palabras_opciones)
         or respuesta not in opciones_limpias
+        or complejidad not in NIVELES_COMPLEJIDAD[1:]
+        or bloom not in NIVELES_BLOOM
+        or not fuente
+        or not referencia
     ):
         return None
 
@@ -433,6 +525,14 @@ def normalizar_pregunta(item: dict[str, Any], numero: int) -> dict[str, Any] | N
         "respuesta": respuesta,
         "explicacion": explicacion,
         "habilidad": habilidad,
+        "complejidad": complejidad,
+        "bloom": bloom,
+        "tipo_ejercicio": tipo_ejercicio,
+        "soporte": {
+            "fuente": fuente,
+            "referencia": referencia,
+            "enlace": enlace,
+        },
     }
 
 
@@ -446,36 +546,46 @@ def instrucciones_generacion(config: dict[str, Any], cantidad: int) -> str:
     )
     return f"""
 Crea {cantidad} reactivos de alta calidad para un simulacro colombiano de
-{config['modo']}.
+{config['modo']} orientado a concursos de carrera administrativa.
 
 Tema o eje: {config['tema'] or config['eje']}.
 Perfil: {config['perfil']}.
+Dificultad solicitada: {config['complejidad']}.
 Extensión del texto: {config['extension']}.
 Extensión de las opciones: {config['opciones_extension']}.
+Tipo de ejercicio: {config['tipo_ejercicio']}.
+Fuente base indicada por el usuario: {config['fuente_oficial'] or 'material temático general; no inventes una norma'}.
 
 {base}
 
-Cada reactivo debe ser independiente, no repetirse y tener esta estructura:
+Cada reactivo debe ser independiente, complejo y no repetirse. Devuelve esta estructura:
 {{
-  "contexto": "Párrafo de lectura",
-  "enunciado": "Pregunta clara",
-  "opciones": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+  "contexto": "Texto o caso de 8 a 10 líneas visuales, aproximadamente 100 a 160 palabras",
+  "enunciado": "Pregunta clara y exigente",
+  "opciones": {{"A": "Párrafo de mínimo 3 líneas", "B": "Párrafo de mínimo 3 líneas", "C": "Párrafo de mínimo 3 líneas", "D": "Párrafo de mínimo 3 líneas"}},
   "respuesta": "A",
-  "explicacion": "Explica por qué la respuesta es correcta y por qué la lectura permite descartar las demás",
-  "habilidad": "idea principal, inferencia, propósito, tono, argumento, relación o evaluación"
+  "explicacion": "Fundamenta la respuesta y explica por qué las otras tres se descartan",
+  "habilidad": "idea principal, inferencia, propósito, tono, argumento, relación o evaluación",
+  "complejidad": "Básica, Intermedia, Avanzada o Experta",
+  "bloom": "Comprender, Aplicar, Analizar, Evaluar o Inferir",
+  "tipo_ejercicio": "Comprensión lectora, Lectura crítica o Juicio situacional",
+  "soporte": {{"fuente": "nombre de la norma, guía, texto o material", "referencia": "artículo, capítulo, apartado o explicación de origen", "enlace": "URL oficial si existe"}}
 }}
 
-REGLAS:
+REGLAS OBLIGATORIAS:
 - Devuelve únicamente un objeto JSON con la clave "preguntas" y una lista.
-- Las cuatro opciones deben tener extensión y estructura parecidas; evita pistas por longitud.
-- Solo una opción puede ser correcta.
+- Siempre produce exactamente cuatro opciones A, B, C y D.
+- El contexto debe tener mínimo 75 palabras y preferiblemente 100 a 160 palabras.
+- Cada opción debe tener mínimo 22 palabras y extensión parecida a las demás.
+- Solo una opción puede ser correcta; las otras deben ser plausibles pero incorrectas.
 - No uses "todas las anteriores" ni "ninguna de las anteriores".
-- No inventes citas, artículos, sentencias, fechas o datos normativos.
-- Si se trata de un tema jurídico, formula el reactivo sobre el texto y no presentes
-  como vigente una norma que no esté en el material proporcionado.
+- No inventes citas, artículos, sentencias, fechas, vigencias o datos normativos.
+- Si no se proporciona una norma concreta, no atribuyas artículos: usa como fuente el texto base o material temático y dilo claramente.
+- Para temas jurídicos o administrativos, el soporte debe identificar la norma o guía de origen; no presentes una norma como vigente sin material que lo confirme.
+- En juicio situacional, presenta un escenario laboral y opciones de actuación; evalúa la decisión más adecuada según el caso y su soporte.
 - Para comprensión lectora prioriza información explícita, inferencias y vocabulario.
-- Para lectura crítica prioriza tesis, argumentos, supuestos, tono, propósito,
-  relación entre ideas y evaluación de la evidencia.
+- Para lectura crítica prioriza tesis, argumentos, supuestos, tono, propósito, relación entre ideas y evaluación de evidencia.
+- Aplica la taxonomía de Bloom y asigna la habilidad que realmente mide el reactivo.
 """.strip()
 
 
@@ -554,8 +664,25 @@ def generar_preguntas(config: dict[str, Any], cantidad: int) -> tuple[list[dict]
 
 
 # -----------------------------------------------------------------------------
-# PDF
+# PDF Y ARCHIVOS DEL PROYECTO
 # -----------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+PDF_DIR = BASE_DIR / "pdf_generados"
+PDF_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def guardar_pdf_en_proyecto(pdf_bytes: bytes, config: dict[str, Any]) -> Path | None:
+    """Guarda una copia organizada; el botón de descarga también la entrega al usuario."""
+    try:
+        sello = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nombre = re.sub(r"[^a-zA-Z0-9_-]+", "_", config.get("eje", "simulacro"))[:45]
+        ruta = PDF_DIR / f"simulacro_{nombre}_{sello}.pdf"
+        ruta.write_bytes(pdf_bytes)
+        return ruta
+    except Exception:
+        return None
+
+
 def seguro_pdf(texto: Any) -> str:
     return html.escape(str(texto or "")).replace("\n", "<br/>")
 
@@ -655,9 +782,15 @@ def generar_pdf(preguntas: list[dict], config: dict[str, Any]) -> bytes:
     ]
 
     for idx, item in enumerate(preguntas, 1):
+        soporte = item.get("soporte", {})
         elementos.extend(
             [
-                Paragraph(f"Pregunta {idx} — {seguro_pdf(item.get('habilidad'))}", pregunta),
+                Paragraph(
+                    f"Pregunta {idx} — {seguro_pdf(item.get('habilidad'))} | "
+                    f"Complejidad: {seguro_pdf(item.get('complejidad', 'Intermedia'))} | "
+                    f"Bloom: {seguro_pdf(item.get('bloom', 'Analizar'))}",
+                    pregunta,
+                ),
                 Paragraph(f"<b>Texto:</b> {seguro_pdf(item['contexto'])}", contexto),
                 Paragraph(f"<b>Enunciado:</b> {seguro_pdf(item['enunciado'])}", pregunta),
             ]
@@ -675,10 +808,15 @@ def generar_pdf(preguntas: list[dict], config: dict[str, Any]) -> bytes:
     elementos.append(PageBreak())
     elementos.append(Paragraph("Clave y retroalimentación", titulo))
     for idx, item in enumerate(preguntas, 1):
+        soporte = item.get("soporte", {})
         elementos.append(
             Paragraph(
                 f"<b>{idx}. Respuesta correcta: {item['respuesta']}</b><br/>"
-                f"{seguro_pdf(item['explicacion'])}",
+                f"<b>Complejidad:</b> {seguro_pdf(item.get('complejidad', 'Intermedia'))} · "
+                f"<b>Bloom:</b> {seguro_pdf(item.get('bloom', 'Analizar'))}<br/>"
+                f"{seguro_pdf(item['explicacion'])}<br/>"
+                f"<b>Soporte:</b> {seguro_pdf(soporte.get('fuente', 'No informado'))} — "
+                f"{seguro_pdf(soporte.get('referencia', ''))}",
                 explicacion,
             )
         )
@@ -687,7 +825,7 @@ def generar_pdf(preguntas: list[dict], config: dict[str, Any]) -> bytes:
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.HexColor("#64748b"))
-        canvas.drawString(16 * mm, 9 * mm, "SÍ AL MÉRITO - Preparación para el empleo público")
+        canvas.drawString(16 * mm, 9 * mm, "© 2026 SÍ AL MÉRITO — Cesar Alonso Padilla")
         canvas.drawRightString(A4[0] - 16 * mm, 9 * mm, f"Página {canvas.getPageNumber()}")
         canvas.restoreState()
 
@@ -700,7 +838,7 @@ def generar_pdf(preguntas: list[dict], config: dict[str, Any]) -> bytes:
 # -----------------------------------------------------------------------------
 st.markdown("<div class='brand-title'>SÍ AL MÉRITO</div>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='brand-subtitle'>Lector Crítico Pro · Comprensión lectora y lectura crítica para concursos públicos</div>",
+    "<div class='brand-subtitle'>Lector Crítico CNSC · Comprensión lectora, lectura crítica y juicio situacional</div>",
     unsafe_allow_html=True,
 )
 st.markdown(
@@ -731,43 +869,57 @@ with st.container(border=True):
                 "Tipo de evaluación:",
                 ["Comprensión lectora", "Lectura crítica"],
             )
+            tipo_ejercicio = st.selectbox(
+                "Tipo de ejercicio:",
+                ["Mixto", "Comprensión lectora", "Lectura crítica", "Juicio situacional"],
+            )
             perfil = st.selectbox(
                 "Perfil del aspirante:",
-                ["Todos los perfiles", "Bachiller", "Técnico", "Profesional", "Directivo"],
+                ["Todos los perfiles", "Bachiller", "Técnico", "Tecnólogo", "Profesional", "Directivo"],
             )
             cantidad = st.selectbox(
                 "Número de preguntas:",
                 CANTIDADES,
                 index=CANTIDADES.index(10),
             )
+            complejidad = st.selectbox("Complejidad:", NIVELES_COMPLEJIDAD, index=0)
         with col2:
-            eje = st.text_input(
-                "Eje temático o área:",
-                placeholder="Ejemplo: ética pública, historia, salud, derecho, ambiente...",
+            eje_catalogo = st.selectbox("Eje temático de carrera administrativa:", EJES_CARRERA_ADMINISTRATIVA)
+            eje_libre = st.text_input(
+                "Eje o subtema personalizado (opcional):",
+                placeholder="Ejemplo: Ley 1437, servicio al ciudadano, archivo, contratación...",
             )
             extension = st.selectbox(
                 "Extensión de los textos:",
                 [
-                    "Media: 250 a 400 palabras",
-                    "Larga: 450 a 700 palabras",
-                    "Muy larga: 700 a 1000 palabras",
+                    "Compleja: 8 a 10 líneas (100 a 160 palabras)",
+                    "Profunda: 12 a 16 líneas (170 a 260 palabras)",
+                    "Avanzada: 17 a 25 líneas (270 a 400 palabras)",
                 ],
-                index=1,
+                index=0,
             )
             opciones_extension = st.selectbox(
-                "Extensión de las opciones:",
+                "Extensión mínima de las opciones:",
                 [
-                    "Claras: 15 a 30 palabras",
-                    "Desarrolladas: 30 a 55 palabras",
-                    "Amplias: 55 a 90 palabras",
+                    "Desarrolladas: mínimo 3 líneas (22 a 40 palabras)",
+                    "Amplias: 4 a 6 líneas (41 a 70 palabras)",
                 ],
-                index=1,
+                index=0,
             )
 
+        fuente_oficial = st.text_input(
+            "Fuente oficial o norma base (opcional):",
+            placeholder="Ejemplo: Ley 1437 de 2011, artículo 14; guía oficial de la convocatoria; documento suministrado.",
+        )
         texto_base = st.text_area(
             "Texto, documento o material base (opcional):",
-            placeholder="Si lo dejas vacío, AlonsoBot creará los textos sobre el eje temático indicado.",
-            height=150,
+            placeholder="Pega aquí el material de estudio. La IA deberá fundamentar las respuestas en este contenido.",
+            height=170,
+        )
+        archivo_base = st.file_uploader(
+            "O carga un PDF, Word o TXT de estudio:",
+            type=["pdf", "docx", "txt"],
+            help="El contenido cargado se incorpora como material base para las preguntas y su soporte.",
         )
         iniciar = st.form_submit_button(
             "🚀 Generar simulacro",
@@ -775,18 +927,31 @@ with st.container(border=True):
         )
 
 if iniciar:
-    if not eje.strip() and not texto_base.strip():
-        st.warning("Escribe un eje temático o pega un texto base para generar el simulacro.")
+    eje = eje_libre.strip()
+    if not eje and eje_catalogo != "Todos los ejes / tema libre":
+        eje = eje_catalogo
+    try:
+        texto_archivo, nombre_archivo = extraer_texto_archivo(archivo_base)
+    except RuntimeError as error:
+        texto_archivo, nombre_archivo = "", ""
+        st.error(str(error))
+    texto_completo = "\n\n".join(part for part in (texto_base.strip(), texto_archivo) if part).strip()
+    fuente_final = fuente_oficial.strip() or nombre_archivo
+    if not eje and not texto_completo:
+        st.warning("Selecciona un eje, escribe un subtema o carga/pega un material base.")
     else:
         config = {
             "modo": modo,
+            "tipo_ejercicio": tipo_ejercicio,
             "perfil": perfil,
             "cantidad": cantidad,
-            "eje": eje.strip() or "Tema del texto base",
-            "tema": eje.strip(),
+            "eje": eje or "Tema del texto base",
+            "tema": eje,
+            "complejidad": complejidad,
             "extension": extension,
             "opciones_extension": opciones_extension,
-            "texto_base": texto_base.strip(),
+            "fuente_oficial": fuente_final,
+            "texto_base": texto_completo,
         }
         error_generacion = ""
         with st.spinner(f"Construyendo {cantidad} preguntas en bloques de {BLOQUE_GENERACION}..."):
@@ -841,7 +1006,8 @@ if preguntas_actuales:
     for idx, item in enumerate(preguntas_actuales, 1):
         key = f"respuesta_{item.get('id', idx)}_{idx}"
         with st.expander(
-            f"Pregunta {idx} · {item.get('habilidad', 'Análisis de lectura')}",
+            f"Pregunta {idx} · {item.get('habilidad', 'Análisis de lectura')} · "
+            f"{item.get('complejidad', 'Intermedia')} · Bloom: {item.get('bloom', 'Analizar')}",
             expanded=(idx == 1),
         ):
             contexto_seguro = html.escape(item["contexto"]).replace("\n", "<br>")
@@ -887,19 +1053,27 @@ if preguntas_actuales:
                 if elegida == item["respuesta"]:
                     aciertos += 1
 
-        porcentaje = (aciertos / total * 100) if total else 0
+        puntaje = calcular_puntaje(aciertos, total) if total else 0
+        puntaje_texto = f"{puntaje:.2f}".rstrip("0").rstrip(".")
+        aprobado = puntaje >= PUNTAJE_MINIMO
         st.markdown("## 📊 Resultado del simulacro")
         r1, r2, r3 = st.columns(3)
         r1.metric("Aciertos", f"{aciertos} / {total}")
-        r2.metric("Porcentaje", f"{porcentaje:.1f}%")
+        r2.metric("Puntaje", f"{puntaje_texto} / 100")
         r3.metric("Sin responder", str(total - respondidas_final))
+        st.caption(f"Cada acierto vale {valor_por_pregunta(total):.2f} puntos. Mínimo para ganar: {PUNTAJE_MINIMO}/100.")
 
-        if porcentaje >= 80:
-            st.success("Excelente desempeño. Mantén el entrenamiento con textos de mayor complejidad.")
-        elif porcentaje >= 60:
-            st.warning("Buen avance. Revisa las explicaciones y fortalece los tipos de pregunta con más errores.")
+        if aprobado:
+            st.success(f"🎉 ¡GANASTE! Obtuviste {puntaje_texto}/100 puntos.")
         else:
-            st.info("Este resultado es un punto de partida. Repasa los textos y vuelve a practicar con otro eje.")
+            st.error(f"❌ NO GANASTE. Obtuviste {puntaje_texto}/100; necesitas mínimo {PUNTAJE_MINIMO}.")
+
+        if puntaje >= 80:
+            st.info("Excelente desempeño. Mantén el entrenamiento con textos de mayor complejidad.")
+        elif aprobado:
+            st.info("Aprobaste. Revisa las explicaciones para seguir fortaleciendo tus habilidades.")
+        else:
+            st.info("Este resultado es un diagnóstico. Repasa los textos y vuelve a practicar con otro eje.")
 
         st.markdown("### Retroalimentación")
         for idx, item in enumerate(preguntas_actuales, 1):
@@ -916,15 +1090,18 @@ if preguntas_actuales:
     else:
         try:
             pdf_bytes = generar_pdf(preguntas_actuales, config_actual)
+            ruta_pdf = guardar_pdf_en_proyecto(pdf_bytes, config_actual)
             st.download_button(
                 "📄 Descargar cuadernillo PDF con clave y explicaciones",
                 data=pdf_bytes,
                 file_name=(
-                    f"LectorCritico_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                    f"LectorCriticoCNSC_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
                 ),
                 mime="application/pdf",
                 use_container_width=True,
             )
+            if ruta_pdf:
+                st.caption(f"Copia organizada en: pdf_generados/{ruta_pdf.name}")
         except Exception:
             st.error("No fue posible generar el PDF en este momento.")
 else:
@@ -937,8 +1114,9 @@ else:
 st.markdown(
     f"""
     <div class="footer-box">
-        <strong>SÍ AL MÉRITO · Lector Crítico Pro</strong><br>
-        Comprensión lectora, lectura crítica y preparación para concursos de carrera administrativa.<br>
+        <strong>SÍ AL MÉRITO · Lector Crítico CNSC</strong><br>
+        Comprensión lectora, lectura crítica y juicio situacional para concursos de carrera administrativa.<br>
+        © 2026 SÍ AL MÉRITO — Cesar Alonso Padilla. Todos los derechos reservados.<br>
         Correo: {CORREO_EMPRESA} · WhatsApp: {WHATSAPP}<br>
         Fuentes oficiales para verificación: CNSC y SIMO.
     </div>
