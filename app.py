@@ -634,7 +634,8 @@ def generar_preguntas(config: dict[str, Any], cantidad: int) -> tuple[list[dict]
     huellas: set[str] = set()
     intentos = 0
 
-    while len(preguntas) < cantidad and intentos < 3:
+    # Se permiten varios intentos, pero nunca se presenta un simulacro incompleto como terminado.
+    while len(preguntas) < cantidad and intentos < 6:
         faltan = cantidad - len(preguntas)
         lote = min(BLOQUE_GENERACION, faltan)
         intentos += 1
@@ -961,12 +962,7 @@ if iniciar:
                 preguntas, uso_ia = [], False
                 error_generacion = str(error)
 
-        if len(preguntas) < cantidad and preguntas:
-            st.warning(
-                f"Se generaron {len(preguntas)} preguntas válidas de {cantidad}. "
-                "Puedes volver a intentarlo para completar el simulacro."
-            )
-        if preguntas:
+        if len(preguntas) == cantidad:
             st.session_state["preguntas"] = preguntas
             st.session_state["config"] = config
             st.session_state["uso_ia"] = uso_ia
@@ -976,7 +972,11 @@ if iniciar:
         else:
             st.error(
                 error_generacion
-                or "No se pudo construir el simulacro. Revisa la configuración e inténtalo de nuevo."
+                or (
+                    f"La IA solo validó {len(preguntas)} de {cantidad} preguntas. "
+                    "No se mostrará un simulacro incompleto. Reduce la cantidad, "
+                    "aporta un texto base o vuelve a intentarlo."
+                )
             )
 
 
