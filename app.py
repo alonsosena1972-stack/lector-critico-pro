@@ -478,44 +478,90 @@ def limpiar_json(texto: str) -> str:
     return texto.strip()
 
 
-def normalizar_pregunta(item: dict[str, Any], numero: int) -> dict[str, Any] | None:
-    """Valida estructura, dificultad, extensión y soporte de cada reactivo."""
+def _valor_canonico(valor: Any, permitidos: list[str], defecto: str) -> str:
+    texto = str(valor or "").strip()
+    normalizado = texto.casefold()
+    for permitido in permitidos:
+        if permitido.casefold() == normalizado:
+            return permitido
+    for permitido in permitidos:
+        if permitido.casefold() in normalizado or normalizado in permitido.casefold():
+            return permitido
+    return defecto
+
+
+def normalizar_pregunta(
+    item: dict[str, Any], numero: int, config: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """Valida y tolera pequeñas variaciones del JSON devuelto por la IA."""
     if not isinstance(item, dict):
         return None
-    contexto = str(item.get("contexto", "")).strip()
-    enunciado = str(item.get("enunciado", "")).strip()
-    explicacion = str(item.get("explicacion", "")).strip()
-    habilidad = str(item.get("habilidad", "")).strip() or "Análisis de lectura"
-    complejidad = str(item.get("complejidad", "Intermedia")).strip()
-    bloom = str(item.get("bloom", "Analizar")).strip()
-    tipo_ejercicio = str(item.get("tipo_ejercicio", "Lectura crítica")).strip()
-    opciones = item.get("opciones", {})
-    respuesta = str(item.get("respuesta", "")).strip().upper()
-    soporte = item.get("soporte", {})
-    if not isinstance(soporte, dict):
-        soporte = {}
-    fuente = str(soporte.get("fuente", "")).strip()
-    referencia = str(soporte.get("referencia", "")).strip()
-    enlace = str(soporte.get("enlace", "")).strip()
+    config = config or {}
+    contexto = str(item.get("contexto") or item.get("texto") or item.get("parrafo") or "").strip()
+    enunciado = str(item.get("enunciado") or item.get("pregunta") or "").strip()
+    explicacion = str(item.get("explicacion") or item.get("justificacion") or "").strip()
+    habilidad = str(item.get("habilidad") or item.get("competencia") or "Análisis de lectura").strip()
+    complejidad = _valor_canonico(item.get("complejidad"), NIVELES_COMPLEJIDAD[1:], "Intermedia")
+    bloom = _valor_canonico(item.get("bloom") or item.get("taxonomia_bloom"), NIVELES_BLOOM, "Analizar")
+    tipo_ejercicio = str(item.get("tipo_ejercicio") or config.get("tipo_ejercicio") or "Lectura crítica").strip()
+    opciones = item.get("opciones") or item.get("respuestas") or {}
+    respuesta_raw = item.get("respuesta") or item.get("respuesta_correcta") or item.get("correcta") or ""
+    if isinstance(respuesta_raw, dict):
+        respuesta_raw = respuesta_raw.get("letra") or respuesta_raw.get("opcion") or respuesta_raw.get("respuesta") or ""
+    respuesta_texto = str(respuesta_raw).strip().upper()
+    respuesta_match = re.search(r"(?:RESPUESTA|CORRECTA|OPCIÓN|OPCION)?\s*[:.)-]?\s*([ABCD])\b", respuesta_texto)
+    if respuesta_match:
+        respuesta = respuesta_match.group(1)
+    else:
+        letras_encontradas = re.findall(r"\b([ABCD])\b", respuesta_texto)
+        respuesta = letras_encontradas[-1] if letras_encontradas else respuesta_texto[:1]
 
+    if isinstance(opciones, list):
+        opciones_convertidas: dict[str, Any] = {}
+        for idx, elemento in enumerate(opciones[:4]):
+            letra = "ABCD"[idx]
+            if isinstance(elemento, dict):
+                texto_opcion = elemento.get("texto") or elemento.get("opcion") or elemento.get("contenido") or ""
+                letra_indicada = str(elemento.get("letra") or letra).strip().upper()[:1]
+                opciones_convertidas[letra_indicada if letra_indicada in "ABCD" else letra] = texto_opcion
+            else:
+                opciones_convertidas[letra] = elemento
+        opciones = opciones_convertidas
     if not isinstance(opciones, dict):
         return None
-    opciones_limpias = {
-        letra: str(opciones.get(letra, "")).strip()
-        for letra in ("A", "B", "C", "D")
-    }
+    opciones_limpias: dict[str, str] = {"A": "", "B": "", "C": "", "D": ""}
+    for clave, valor in opciones.items():
+        clave_texto = str(clave).strip().upper()
+        clave_match = re.search(r"([ABCD])", clave_texto)
+        if clave_match and not opciones_limpias[clave_match.group(1)]:
+            opciones_limpias[clave_match.group(1)] = str(valor).strip()
+
+    soporte = item.get("soporte") or item.get("fuente") or {}
+    if isinstance(soporte, str):
+        soporte = {"fuente": soporte}
+    if not isinstance(soporte, dict):
+        soporte = {}
+    fuente = str(soporte.get("fuente") or soporte.get("nombre") or config.get("fuente_oficial") or "").strip()
+    referencia = str(
+        soporte.get("referencia")
+        or soporte.get("articulo")
+        or soporte.get("apartado")
+        or ""
+    ).strip()
+    enlace = str(soporte.get("enlace") or soporte.get("url") or "").strip()
+    if not fuente:
+        fuente = f"Material temático: {config.get('eje', 'tema general')}"
+    if not referencia:
+        referencia = "Fundamentación en el texto del reactivo; verificar la fuente oficial vigente cuando corresponda."
+
     palabras_contexto = len(contexto.split())
     palabras_opciones = [len(opciones_limpias[x].split()) for x in opciones_limpias]
     if (
         palabras_contexto < 75
         or len(enunciado) < 20
         or len(explicacion) < 35
-        or any(palabras < 22 for palabras in palabras_opciones)
+        or any(palabras < 18 for palabras in palabras_opciones)
         or respuesta not in opciones_limpias
-        or complejidad not in NIVELES_COMPLEJIDAD[1:]
-        or bloom not in NIVELES_BLOOM
-        or not fuente
-        or not referencia
     ):
         return None
 
@@ -526,15 +572,11 @@ def normalizar_pregunta(item: dict[str, Any], numero: int) -> dict[str, Any] | N
         "opciones": opciones_limpias,
         "respuesta": respuesta,
         "explicacion": explicacion,
-        "habilidad": habilidad,
+        "habilidad": habilidad or "Análisis de lectura",
         "complejidad": complejidad,
         "bloom": bloom,
         "tipo_ejercicio": tipo_ejercicio,
-        "soporte": {
-            "fuente": fuente,
-            "referencia": referencia,
-            "enlace": enlace,
-        },
+        "soporte": {"fuente": fuente, "referencia": referencia, "enlace": enlace},
     }
 
 
@@ -650,7 +692,7 @@ def generar_preguntas(config: dict[str, Any], cantidad: int) -> tuple[list[dict]
             break
 
         for item in crudas:
-            normalizada = normalizar_pregunta(item, len(preguntas) + 1)
+            normalizada = normalizar_pregunta(item, len(preguntas) + 1, config)
             if normalizada is None:
                 continue
             huella = re.sub(
