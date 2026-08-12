@@ -262,6 +262,83 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Tema oscuro profesional, inspirado en interfaces de desarrollo como GitHub.
+st.markdown(
+    """
+    <style>
+    html, body, .stApp, [data-testid="stAppViewContainer"],
+    [data-testid="stMain"], [data-testid="stHeader"] {
+        background: #0d1117 !important;
+        color: #e6edf3 !important;
+    }
+    [data-testid="stMain"] { background: #0d1117 !important; }
+    .block-container { background: #0d1117 !important; }
+    h1, h2, h3, h4, h5, h6, p, label,
+    [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"] p {
+        color: #e6edf3 !important;
+    }
+    [data-testid="stExpander"] {
+        background: #161b22 !important;
+        border: 1px solid #30363d !important;
+        border-radius: 12px !important;
+    }
+    [data-testid="stExpanderDetails"] { background: #161b22 !important; }
+    .reading-card {
+        background: #161b22 !important;
+        border-color: #58a6ff !important;
+        color: #e6edf3 !important;
+        box-shadow: 0 8px 24px rgba(0,0,0,.25) !important;
+    }
+    .question-title, .reading-label { color: #79c0ff !important; }
+    div[data-baseweb="input"], div[data-baseweb="textarea"],
+    div[data-baseweb="select"] > div {
+        background: #161b22 !important;
+        border-color: #30363d !important;
+        color: #e6edf3 !important;
+    }
+    div[data-baseweb="input"] input,
+    div[data-baseweb="textarea"] textarea,
+    div[data-baseweb="select"] input {
+        color: #e6edf3 !important;
+        -webkit-text-fill-color: #e6edf3 !important;
+    }
+    div[data-baseweb="popover"], div[data-baseweb="menu"],
+    div[data-baseweb="menu"] li {
+        background: #161b22 !important;
+        color: #e6edf3 !important;
+    }
+    [data-testid="stRadio"] label, [data-testid="stCheckbox"] label {
+        color: #e6edf3 !important;
+    }
+    [data-testid="stAlert"] {
+        background: #161b22 !important;
+        color: #e6edf3 !important;
+        border: 1px solid #30363d !important;
+    }
+    .stButton > button, .stDownloadButton > button {
+        background: linear-gradient(135deg, #238636, #1f6feb) !important;
+        border: 1px solid #58a6ff !important;
+        color: white !important;
+    }
+    [data-testid="stMetric"] {
+        background: #161b22 !important;
+        border: 1px solid #30363d !important;
+        border-radius: 10px;
+        padding: .7rem;
+    }
+    [data-testid="stMetricLabel"], [data-testid="stMetricValue"] {
+        color: #e6edf3 !important;
+    }
+    .footer-box {
+        background: #161b22 !important;
+        color: #8b949e !important;
+        border-color: #d29922 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 # -----------------------------------------------------------------------------
 # CONSTANTES Y SECRETOS
@@ -275,6 +352,9 @@ ENLACE_JITSI = "https://meet.jit.si/SiAlMeritoSesionGarantizada2026Oficial"
 CANTIDADES = [1, 5, 10, 20, 30, 50, 80, 100]
 # Bloques pequeños: mejor calidad y menos espera para 5, 10 y 20 preguntas.
 BLOQUE_GENERACION = 5
+# Umbrales estructurales; la extensión visual se refuerza en la interfaz y el PDF.
+MIN_PALABRAS_CONTEXTO = 65
+MIN_PALABRAS_OPCION = 16
 NIVELES_COMPLEJIDAD = [
     "Mixta (progresiva)",
     "Básica",
@@ -557,10 +637,10 @@ def normalizar_pregunta(
     palabras_contexto = len(contexto.split())
     palabras_opciones = [len(opciones_limpias[x].split()) for x in opciones_limpias]
     if (
-        palabras_contexto < 75
+        palabras_contexto < MIN_PALABRAS_CONTEXTO
         or len(enunciado) < 20
         or len(explicacion) < 35
-        or any(palabras < 18 for palabras in palabras_opciones)
+        or any(palabras < MIN_PALABRAS_OPCION for palabras in palabras_opciones)
         or respuesta not in opciones_limpias
     ):
         return None
@@ -651,7 +731,7 @@ def generar_bloque(config: dict[str, Any], cantidad: int) -> list[dict[str, Any]
         ],
         response_format={"type": "json_object"},
         temperature=0.25,
-        max_tokens=min(9000, max(3500, cantidad * 750)),
+        max_tokens=min(10000, max(5000, cantidad * 900)),
     )
     contenido = respuesta.choices[0].message.content or ""
     datos = json.loads(limpiar_json(contenido))
